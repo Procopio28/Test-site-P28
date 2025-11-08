@@ -1,0 +1,5 @@
+{
+  "name": "PVZ2 Tutorial Clone",
+  "description": "A simplified clone of the tutorial levels from Plants vs Zombies 2, built with React and Tailwind CSS. Place plants to defend your lawn from incoming zombies.",
+  "requestFramePermissions": []
+}
