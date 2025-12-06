@@ -1,0 +1,385 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Lime-It: Local Transfer</title>
+    <script src="https://unpkg.com/peerjs@1.4.7/dist/peerjs.min.js"></script>
+    <style>
+        :root {
+            --lime: #39ff14;
+            --dark: #121212;
+            --panel: #1e1e1e;
+            --text: #e0e0e0;
+        }
+
+        body {
+            font-family: 'Courier New', Courier, monospace;
+            background-color: var(--dark);
+            color: var(--text);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            min-height: 100vh;
+            margin: 0;
+            padding: 20px;
+        }
+
+        h1 {
+            color: var(--lime);
+            text-shadow: 0 0 10px rgba(57, 255, 20, 0.5);
+            margin-bottom: 5px;
+        }
+
+        .subtitle {
+            font-size: 0.8rem;
+            opacity: 0.7;
+            margin-bottom: 30px;
+        }
+
+        .container {
+            width: 100%;
+            max-width: 500px;
+            background: var(--panel);
+            padding: 20px;
+            border-radius: 12px;
+            border: 1px solid #333;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.5);
+        }
+
+        .status-box {
+            background: #000;
+            border: 1px solid var(--lime);
+            padding: 15px;
+            border-radius: 6px;
+            margin-bottom: 20px;
+            text-align: center;
+        }
+
+        .id-display {
+            font-size: 1.5rem;
+            font-weight: bold;
+            color: var(--lime);
+            letter-spacing: 2px;
+            margin: 10px 0;
+            cursor: pointer;
+        }
+
+        input {
+            width: 70%;
+            padding: 10px;
+            background: #333;
+            border: 1px solid #555;
+            color: white;
+            border-radius: 4px;
+            font-family: inherit;
+        }
+
+        button {
+            padding: 10px 20px;
+            background: var(--lime);
+            color: black;
+            border: none;
+            font-weight: bold;
+            border-radius: 4px;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        button:hover {
+            box-shadow: 0 0 15px var(--lime);
+        }
+
+        .transfer-area {
+            margin-top: 30px;
+            border-top: 1px solid #333;
+            padding-top: 20px;
+            display: none; /* Hidden until connected */
+        }
+
+        .drop-zone {
+            border: 2px dashed #555;
+            padding: 40px;
+            text-align: center;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: 0.3s;
+        }
+
+        .drop-zone.hover {
+            border-color: var(--lime);
+            background: rgba(57, 255, 20, 0.1);
+        }
+
+        .progress-bar {
+            width: 100%;
+            height: 10px;
+            background: #333;
+            margin-top: 15px;
+            border-radius: 5px;
+            overflow: hidden;
+            display: none;
+        }
+
+        .progress-fill {
+            height: 100%;
+            background: var(--lime);
+            width: 0%;
+            transition: width 0.1s;
+        }
+
+        .log {
+            margin-top: 20px;
+            font-size: 0.75rem;
+            color: #888;
+            height: 100px;
+            overflow-y: auto;
+            border-top: 1px solid #333;
+            padding-top: 10px;
+        }
+
+        /* Mobile Optimization */
+        @media (max-width: 600px) {
+            input { width: 60%; }
+        }
+    </style>
+</head>
+<body>
+
+    <h1>Lime-It</h1>
+    <div class="subtitle">Limewire Discovery + ShareIt Speed</div>
+
+    <div class="container">
+        <div id="connectionPanel">
+            <div class="status-box">
+                <div>Your Device ID:</div>
+                <div class="id-display" id="myId" onclick="copyId()">Loading...</div>
+                <div style="font-size: 0.7rem; color: #888;">(Tap to copy)</div>
+            </div>
+
+            <div style="display:flex; justify-content: space-between; gap: 10px;">
+                <input type="text" id="remoteIdInput" placeholder="Enter Partner ID">
+                <button onclick="connectToPeer()">Connect</button>
+            </div>
+        </div>
+
+        <div id="transferPanel" class="transfer-area">
+            <h3 style="color:var(--lime); margin-top:0;">Connected!</h3>
+            <p>Connection established via Local Network (P2P).</p>
+            
+            <div class="drop-zone" id="dropZone" onclick="document.getElementById('fileInput').click()">
+                <p>Click or Drag files here</p>
+                <input type="file" id="fileInput" style="display: none" onchange="handleFiles(this.files)">
+            </div>
+
+            <div class="progress-bar" id="progressBar">
+                <div class="progress-fill" id="progressFill"></div>
+            </div>
+            <div id="statusText" style="margin-top: 10px; text-align: center;"></div>
+        </div>
+
+        <div class="log" id="logArea"></div>
+    </div>
+
+    <script>
+        // --- CONFIGURATION ---
+        // Generates a short, readable ID (Limewire style) rather than a long UUID
+        const generateShortId = () => Math.floor(1000 + Math.random() * 9000).toString();
+        
+        let peer = null;
+        let conn = null;
+        const myId = generateShortId();
+        
+        // --- UI ELEMENTS ---
+        const ui = {
+            myId: document.getElementById('myId'),
+            remoteId: document.getElementById('remoteIdInput'),
+            log: document.getElementById('logArea'),
+            transferPanel: document.getElementById('transferPanel'),
+            connectionPanel: document.getElementById('connectionPanel'),
+            progress: document.getElementById('progressBar'),
+            fill: document.getElementById('progressFill'),
+            status: document.getElementById('statusText')
+        };
+
+        // --- LOGGING ---
+        function log(msg) {
+            const time = new Date().toLocaleTimeString();
+            ui.log.innerHTML = `[${time}] ${msg}<br>` + ui.log.innerHTML;
+            console.log(msg);
+        }
+
+        // --- PEERJS SETUP (The Handshake) ---
+        // We use the public PeerJS cloud only to exchange IP addresses (SDP). 
+        // Once connected, data goes P2P.
+        function initPeer() {
+            peer = new Peer(myId, {
+                debug: 2
+            });
+
+            peer.on('open', (id) => {
+                ui.myId.innerText = id;
+                log(`Ready. Your ID is: ${id}`);
+            });
+
+            peer.on('connection', (c) => {
+                log("Incoming connection...");
+                setupConnection(c);
+            });
+
+            peer.on('error', (err) => {
+                log(`Error: ${err.type}`);
+            });
+        }
+
+        // --- CONNECTION HANDLER ---
+        function connectToPeer() {
+            const remoteId = ui.remoteId.value;
+            if (!remoteId) return alert("Enter an ID first");
+            log(`Connecting to ${remoteId}...`);
+            const c = peer.connect(remoteId);
+            setupConnection(c);
+        }
+
+        function setupConnection(c) {
+            conn = c;
+            
+            conn.on('open', () => {
+                log("Connected! Peer-to-Peer link established.");
+                ui.transferPanel.style.display = 'block';
+                ui.connectionPanel.style.opacity = '0.5';
+                ui.connectionPanel.style.pointerEvents = 'none';
+            });
+
+            conn.on('data', (data) => {
+                handleIncomingData(data);
+            });
+
+            conn.on('close', () => {
+                log("Connection lost.");
+                ui.transferPanel.style.display = 'none';
+                ui.connectionPanel.style.opacity = '1';
+                ui.connectionPanel.style.pointerEvents = 'all';
+            });
+        }
+
+        // --- FILE TRANSFER LOGIC ---
+        // We chunk files to ensure stability over WebRTC
+        const CHUNK_SIZE = 16 * 1024; // 16KB chunks
+        let incomingFileInfo = null;
+        let incomingFileBuffer = [];
+        let receivedSize = 0;
+
+        function handleFiles(files) {
+            if (files.length === 0) return;
+            const file = files[0];
+            
+            log(`Sending: ${file.name} (${(file.size/1024/1024).toFixed(2)} MB)`);
+            ui.progress.style.display = 'block';
+            ui.fill.style.width = '0%';
+
+            // 1. Send Metadata
+            conn.send({
+                type: 'meta',
+                name: file.name,
+                size: file.size,
+                mime: file.type
+            });
+
+            // 2. Read and Send Chunks
+            const reader = new FileReader();
+            let offset = 0;
+
+            reader.onload = (e) => {
+                conn.send({
+                    type: 'chunk',
+                    data: e.target.result
+                });
+
+                offset += e.target.result.byteLength;
+                
+                // Update UI
+                const percent = (offset / file.size) * 100;
+                ui.fill.style.width = percent + '%';
+                ui.status.innerText = `Sending... ${Math.round(percent)}%`;
+
+                // Next Chunk
+                if (offset < file.size) {
+                    readNextChunk();
+                } else {
+                    log("File sent successfully.");
+                    ui.status.innerText = "Sent!";
+                    conn.send({ type: 'end' });
+                }
+            };
+
+            function readNextChunk() {
+                const slice = file.slice(offset, offset + CHUNK_SIZE);
+                reader.readAsArrayBuffer(slice);
+            }
+
+            readNextChunk();
+        }
+
+        function handleIncomingData(data) {
+            if (data.type === 'meta') {
+                incomingFileInfo = data;
+                incomingFileBuffer = [];
+                receivedSize = 0;
+                ui.progress.style.display = 'block';
+                log(`Receiving: ${data.name}`);
+            } 
+            else if (data.type === 'chunk') {
+                incomingFileBuffer.push(data.data);
+                receivedSize += data.data.byteLength;
+                
+                const percent = (receivedSize / incomingFileInfo.size) * 100;
+                ui.fill.style.width = percent + '%';
+                ui.status.innerText = `Receiving... ${Math.round(percent)}%`;
+            } 
+            else if (data.type === 'end') {
+                log("File received. Saving...");
+                const blob = new Blob(incomingFileBuffer, { type: incomingFileInfo.mime });
+                downloadFile(blob, incomingFileInfo.name);
+                ui.status.innerText = "Complete!";
+                // Reset
+                incomingFileInfo = null;
+                incomingFileBuffer = [];
+            }
+        }
+
+        function downloadFile(blob, filename) {
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = filename;
+            document.body.appendChild(a);
+            a.click();
+            setTimeout(() => {
+                document.body.removeChild(a);
+                URL.revokeObjectURL(url);
+            }, 100);
+        }
+
+        // --- UTILS ---
+        function copyId() {
+            navigator.clipboard.writeText(ui.myId.innerText);
+            alert("ID Copied!");
+        }
+
+        // Drag and Drop Visuals
+        const dz = document.getElementById('dropZone');
+        dz.addEventListener('dragover', (e) => { e.preventDefault(); dz.classList.add('hover'); });
+        dz.addEventListener('dragleave', (e) => { e.preventDefault(); dz.classList.remove('hover'); });
+        dz.addEventListener('drop', (e) => {
+            e.preventDefault();
+            dz.classList.remove('hover');
+            handleFiles(e.dataTransfer.files);
+        });
+
+        // Start
+        initPeer();
+
+    </script>
+</body>
+</html>
